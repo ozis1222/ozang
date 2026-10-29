@@ -1,0 +1,332 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      background: #f4efe6;
+    }
+    #cv {
+      position: absolute;
+      inset: 0;
+      width: 1920px;
+      height: 1080px;
+    }
+  </style>
+  <div id="root" data-composition-id="stickman" data-width="1920" data-height="1080">
+    <canvas id="cv" width="1920" height="1080"></canvas>
+  </div>
+  <script>
+    window.__timelines["stickman"] = gsap.timeline({ paused: true });
+  </script>
+  <script>
+    // Çöp adam: her kare yalnızca t'den çizilir (hf-seek).
+    const cv = document.getElementById("cv");
+    const ctx = cv.getContext("2d");
+    const INK = "#1d1d1f";
+    const ACCENT = "#e8542e";
+    const GROUND = 840;
+    const THIGH = 102, SHIN = 102, UPPER = 80, LOWER = 76, TORSO = 170, HEAD = 46;
+    const BALL_R = 38;
+
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const lerp = (a, b, u) => a + (b - a) * u;
+    const ease = (u) => (u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2);
+
+    function hash(n) {
+      const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+      return s - Math.floor(s);
+    }
+
+    const STAND = { x: 1090, lift: 0, lean: 0, head: 0, sq: 1,
+      aL1: -0.15, aL2: -0.05, aR1: 0.15, aR2: 0.1,
+      lL1: -0.1, lL2: -0.1, lR1: 0.1, lR2: 0.1 };
+
+    function walk(t) {
+      const p = t * Math.PI * 2 * 1.6;
+      const s = Math.sin(p), c = Math.cos(p);
+      return { x: -260 + 540 * t, lift: 0, lean: 0.06, head: 0, sq: 1,
+        lL1: 0.45 * s, lL2: 0.45 * s - 0.6 * Math.max(0, c),
+        lR1: -0.45 * s, lR2: -0.45 * s - 0.6 * Math.max(0, -c),
+        aR1: -0.4 * s, aR2: -0.4 * s + 0.3,
+        aL1: 0.4 * s, aL2: 0.4 * s + 0.3 };
+    }
+
+    const P = (o) => Object.assign({}, STAND, o);
+    const KEYS = [
+      [2.5, walk(2.5)],
+      [2.9, P({})],
+      [3.2, P({ lean: 0.05, head: 0.3, aR1: 0.3, aR2: 0.2 })],
+      [3.6, P({ lean: -0.25, head: 0.2, lR1: -0.7, lR2: -0.15, lL1: 0.05, lL2: 0.05, aR1: -0.7, aR2: -0.4, aL1: 0.7, aL2: 1.0 })],
+      [4.2, P({ lean: 0.1, head: 0.1, lR1: 1.3, lR2: 1.2, lL1: -0.15, lL2: -0.15, aR1: 0.9, aR2: 1.2, aL1: -0.9, aL2: -0.6 })],
+      [4.4, P({ lean: 0.15, head: -0.2, lR1: 1.6, lR2: 1.7, lL1: -0.2, lL2: -0.2, aR1: 1.1, aR2: 1.4, aL1: -1.0, aL2: -0.8 })],
+      [4.9, P({ lean: -0.08, head: -0.45, aR1: 2.3, aR2: 3.1 })],
+      [5.8, P({ lean: -0.1, head: -0.5, aR1: 2.3, aR2: 3.1 })],
+      [6.2, P({ lean: -0.15, head: -0.8, aR1: 2.6, aR2: 2.9, aL1: -2.6, aL2: -2.9 })],
+      [6.4, P({ lean: 0.1, head: 0.4, sq: 0.78, aR1: 1.2, aR2: 1.0, aL1: -1.2, aL2: -1.0, lL1: -0.35, lL2: 0.25, lR1: 0.35, lR2: -0.25 })],
+      [6.6, P({ lean: 0.05, head: 0.2, sq: 1.06, aR1: 0.5, aR2: 0.3, aL1: -0.5, aL2: -0.3 })],
+      [7.6, P({ head: 0.1, aR1: 0.4, aR2: 0.2, aL1: -0.4, aL2: -0.2 })],
+      [7.9, P({ head: 0 })],
+      [8.3, P({ head: -0.15, lift: -8, aR1: 0.8, aR2: 2.0, aL1: -0.8, aL2: -2.0 })],
+      [8.6, P({ head: 0, aR1: 2.2, aR2: 2.6, aL1: -2.2, aL2: -2.6 })],
+    ];
+
+    function keyed(t) {
+      if (t <= KEYS[0][0]) return KEYS[0][1];
+      for (let i = 0; i < KEYS.length - 1; i++) {
+        const [t0, a] = KEYS[i], [t1, b] = KEYS[i + 1];
+        if (t < t1) {
+          const u = ease((t - t0) / (t1 - t0));
+          const o = {};
+          for (const k in b) o[k] = lerp(a[k], b[k], u);
+          return o;
+        }
+      }
+      return KEYS[KEYS.length - 1][1];
+    }
+
+    function pose(t) {
+      if (t < 2.5) return walk(t);
+      const p = Object.assign({}, keyed(t));
+      if (t > 6.6 && t < 7.7) {
+        // Sersemleme: gövde ve kafa sallanır, giderek söner.
+        const d = 1 - (t - 6.6) / 1.1;
+        p.lean += 0.12 * d * Math.sin((t - 6.6) * 11);
+        p.head += 0.25 * d * Math.sin((t - 6.6) * 11 + 1.2);
+      }
+      if (t > 8.6) {
+        // Dans: kollar sırayla iner kalkar, kalça sallanır, dizler zıplar.
+        const w = (t - 8.6) * Math.PI * 2 * 1.9;
+        const b = Math.min(1, (t - 8.6) / 0.3);
+        p.aR1 = lerp(p.aR1, 1.8 + 0.6 * Math.sin(w), b);
+        p.aR2 = p.aR1 + 0.4 + 0.25 * Math.sin(w + 1);
+        p.aL1 = lerp(p.aL1, -1.8 - 0.6 * Math.sin(w + Math.PI), b);
+        p.aL2 = p.aL1 - 0.4 - 0.25 * Math.sin(w + 2);
+        p.lean = 0.14 * Math.sin(w * 0.5) * b;
+        p.head = 0.2 * Math.sin(w * 0.5 + 0.6) * b;
+        const k = 0.25 * Math.abs(Math.sin(w)) * b;
+        p.lL1 = -0.1 - k; p.lL2 = -0.1 + k;
+        p.lR1 = 0.1 + k; p.lR2 = 0.1 - k;
+      }
+      return p;
+    }
+
+    function rig(p) {
+      const ext = (a1, a2) => Math.cos(a1) * THIGH + Math.cos(a2) * SHIN;
+      const hipY = GROUND - Math.max(ext(p.lL1, p.lL2), ext(p.lR1, p.lR2)) + p.lift + (1 - p.sq) * 60;
+      const hip = { x: p.x, y: hipY };
+      const torso = TORSO * p.sq;
+      const neck = { x: hip.x + Math.sin(p.lean) * torso, y: hip.y - Math.cos(p.lean) * torso };
+      const shoulder = { x: lerp(hip.x, neck.x, 0.88), y: lerp(hip.y, neck.y, 0.88) };
+      const ha = p.lean + p.head * 0.5;
+      const headC = { x: neck.x + Math.sin(ha) * (HEAD + 6), y: neck.y - Math.cos(ha) * (HEAD + 6) };
+      const limb = (o, a1, l1, a2, l2) => {
+        const m = { x: o.x + Math.sin(a1) * l1, y: o.y + Math.cos(a1) * l1 };
+        return [o, m, { x: m.x + Math.sin(a2) * l2, y: m.y + Math.cos(a2) * l2 }];
+      };
+      return { hip, neck, headC, ha,
+        legL: limb(hip, p.lL1, THIGH, p.lL2, SHIN), legR: limb(hip, p.lR1, THIGH, p.lR2, SHIN),
+        armL: limb(shoulder, p.aL1, UPPER, p.aL2, LOWER), armR: limb(shoulder, p.aR1, UPPER, p.aR2, LOWER) };
+    }
+
+    const BALL_REST = { x: 1250, y: GROUND - BALL_R };
+    const bonkHead = rig(pose(6.4)).headC;
+
+    function ball(t) {
+      if (t < 4.2) return { x: BALL_REST.x, y: BALL_REST.y, r: 0 };
+      if (t < 5.3) {
+        const u = (t - 4.2) / 1.1;
+        return { x: BALL_REST.x + 900 * u, y: BALL_REST.y - 1150 * u + 220 * u * u, r: u * 14 };
+      }
+      if (t < 5.9) return null;
+      const top = { x: bonkHead.x, y: bonkHead.y - HEAD - BALL_R + 6 };
+      if (t < 6.4) {
+        const u = (t - 5.9) / 0.5;
+        return { x: top.x + 40 * (1 - u), y: lerp(-80, top.y, u * u), r: -u * 3 };
+      }
+      if (t < 7.0) {
+        const u = (t - 6.4) / 0.6;
+        return { x: top.x + 260 * u, y: lerp(top.y, BALL_REST.y, u) - 200 * Math.sin(Math.PI * u) * (1 - u * 0.3), r: u * 4 };
+      }
+      if (t < 7.4) {
+        const u = (t - 7.0) / 0.4;
+        return { x: top.x + 260 + 120 * u, y: BALL_REST.y - 70 * Math.sin(Math.PI * u), r: 4 + u * 2 };
+      }
+      const u = ease(clamp((t - 7.4) / 0.9, 0, 1));
+      return { x: top.x + 380 + 110 * u, y: BALL_REST.y, r: 6 + u * 3.5 };
+    }
+
+    function jit(pt, seed, amt) {
+      return { x: pt.x + (hash(seed) - 0.5) * amt, y: pt.y + (hash(seed + 7.3) - 0.5) * amt };
+    }
+
+    function line(pts, seed, w) {
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      pts.forEach((pt, i) => {
+        const q = jit(pt, seed + i * 3.1, 3);
+        i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y);
+      });
+      ctx.stroke();
+    }
+
+    function drawBall(b, f) {
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.r);
+      ctx.fillStyle = ACCENT;
+      ctx.beginPath();
+      ctx.arc(0, 0, BALL_R + (hash(f + 50) - 0.5) * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 5;
+      ctx.stroke();
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(-BALL_R, 0);
+      ctx.quadraticCurveTo(0, 14, BALL_R, 0);
+      ctx.moveTo(0, -BALL_R);
+      ctx.quadraticCurveTo(-14, 0, 0, BALL_R);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function star(x, y, s, rot) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 ? s * 0.45 : s;
+        const a = (i * Math.PI) / 5;
+        ctx.lineTo(Math.sin(a) * r, -Math.cos(a) * r);
+      }
+      ctx.closePath();
+      ctx.fillStyle = "#f2b630";
+      ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function renderAt(t) {
+      const f = Math.floor(t * 12); // çizgi 12 fps'te "kaynar"
+      ctx.clearRect(0, 0, 1920, 1080);
+      ctx.strokeStyle = INK;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      // Zemin
+      const gpts = [];
+      for (let x = -20; x <= 1940; x += 120) gpts.push({ x, y: GROUND + 2 });
+      line(gpts, f * 13.7, 5);
+
+      const p = pose(t);
+      const r = rig(p);
+
+      // Gölge
+      ctx.fillStyle = "rgba(29,29,31,0.12)";
+      ctx.beginPath();
+      ctx.ellipse(r.hip.x, GROUND + 6, 70 - Math.max(0, -p.lift) * 0.8, 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Arka uzuvlar biraz soluk
+      ctx.globalAlpha = 0.55;
+      line(r.legL, f * 3.3 + 1, 9);
+      line(r.armL, f * 3.3 + 2, 9);
+      ctx.globalAlpha = 1;
+      line([r.hip, r.neck], f * 3.3 + 3, 10);
+      line(r.legR, f * 3.3 + 4, 10);
+
+      // Kafa
+      const hc = jit(r.headC, f * 3.3 + 5, 2.5);
+      ctx.lineWidth = 9;
+      ctx.fillStyle = "#f4efe6";
+      ctx.beginPath();
+      ctx.ellipse(hc.x, hc.y, HEAD, HEAD * (0.9 + 0.1 * p.sq), r.ha, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Göz: sersemken spiral yerine çarpı
+      const ex = hc.x + Math.cos(r.ha) * 14, ey = hc.y + Math.sin(r.ha) * 14 - 6;
+      ctx.fillStyle = INK;
+      if (t > 6.4 && t < 7.6) {
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(ex - 6, ey - 6); ctx.lineTo(ex + 6, ey + 6);
+        ctx.moveTo(ex + 6, ey - 6); ctx.lineTo(ex - 6, ey + 6);
+        ctx.stroke();
+      } else {
+        const blink = Math.abs(t - 1.6) < 0.06 || Math.abs(t - 5.4) < 0.06;
+        ctx.beginPath();
+        ctx.ellipse(ex, ey, 5, blink ? 1 : 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Ağız: dansta gülümser
+      if (t > 8.2) {
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(hc.x + Math.cos(r.ha) * 10, hc.y + 10, 12, 0.2, Math.PI - 0.6);
+        ctx.stroke();
+      }
+
+      line(r.armR, f * 3.3 + 6, 10);
+
+      // Şaşkınlık işareti
+      if (t >= 3.15 && t < 3.75) {
+        const u = clamp((t - 3.15) / 0.12, 0, 1);
+        const s = u < 1 ? u * 1.25 : 1 + 0.25 * Math.max(0, 1 - (t - 3.27) / 0.15);
+        ctx.save();
+        ctx.translate(hc.x + 10, hc.y - 115);
+        ctx.scale(s, s);
+        ctx.fillStyle = ACCENT;
+        ctx.font = "900 72px Nunito, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("!", 0, 0);
+        ctx.restore();
+      }
+
+      // Top ve iz
+      const b = ball(t);
+      if (t > 4.2 && t < 5.3) {
+        for (let i = 3; i >= 1; i--) {
+          const g = ball(t - i * 0.04);
+          if (!g) continue;
+          ctx.globalAlpha = 0.12 * (4 - i);
+          ctx.fillStyle = ACCENT;
+          ctx.beginPath();
+          ctx.arc(g.x, g.y, BALL_R * (1 - i * 0.12), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+      if (b) drawBall(b, f);
+
+      // Kick darbe çizgileri
+      if (t >= 4.2 && t < 4.45) {
+        const u = (t - 4.2) / 0.25;
+        ctx.globalAlpha = 1 - u;
+        for (let i = 0; i < 5; i++) {
+          const a = -1.2 + i * 0.35;
+          const r0 = 45 + 40 * u, r1 = 75 + 60 * u;
+          line([{ x: BALL_REST.x + Math.cos(a) * r0, y: BALL_REST.y + Math.sin(a) * r0 },
+                { x: BALL_REST.x + Math.cos(a) * r1, y: BALL_REST.y + Math.sin(a) * r1 }], f + i, 5);
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      // Kafada dönen yıldızlar
+      if (t >= 6.45 && t < 7.7) {
+        const fade = t > 7.4 ? 1 - (t - 7.4) / 0.3 : Math.min(1, (t - 6.45) / 0.1);
+        ctx.globalAlpha = clamp(fade, 0, 1);
+        for (let i = 0; i < 3; i++) {
+          const a = (t - 6.45) * 6 + (i * Math.PI * 2) / 3;
+          star(hc.x + Math.cos(a) * 72, hc.y - 72 + Math.sin(a) * 18, 17, a * 2);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    window.addEventListener("hf-seek", (e) => renderAt(e.detail.time));
+    renderAt(0);
+  </script>
+</template>

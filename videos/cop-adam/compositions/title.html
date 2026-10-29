@@ -1,0 +1,27 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      justify-content: center;
+      padding-top: 170px;
+      font-family: "Nunito", sans-serif;
+    }
+    #title-text {
+      color: #1d1d1f;
+      font-size: 104px;
+      font-weight: 900;
+      letter-spacing: -0.02em;
+    }
+  </style>
+  <div id="root" data-composition-id="title" data-width="1920" data-height="1080"
+    data-composition-variables='[{"id":"title","type":"string","label":"Başlık","default":"Bir dahaki sefere!"}]'>
+    <h1 id="title-text" class="clip" data-start="0" data-duration="1.6" data-var-text="title">Bir dahaki sefere!</h1>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#title-text", { opacity: 0, y: 40, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(2)" }, 0);
+    window.__timelines["title"] = tl;
+  </script>
+</template>
